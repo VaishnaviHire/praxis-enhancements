@@ -1,0 +1,68 @@
+name: Enhancement Proposal
+description: Create an EPIC issue for an approved enhancement proposal
+labels: ["epic", "triage/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before creating this issue, ensure:
+        1. You have an approved [GitHub Discussion](https://github.com/orgs/praxis-proxy/discussions)
+        2. A maintainer has signed off on the direction
+
+  - type: input
+    id: discussion
+    attributes:
+      label: Discussion Link
+      description: Link to the approved GitHub Discussion
+      placeholder: https://github.com/orgs/praxis-proxy/discussions/NNN
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: High-level summary of the proposed enhancement
+    validations:
+      required: true
+
+  - type: textarea
+    id: success-criteria
+    attributes:
+      label: Success Criteria
+      description: What must be true for this enhancement to be considered complete?
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+    validations:
+      required: true
+
+  - type: textarea
+    id: sub-tasks
+    attributes:
+      label: Sub-Tasks
+      description: Breakdown of implementation work (can be updated later)
+      placeholder: |
+        - [ ] Task 1
+        - [ ] Task 2
+
+  - type: dropdown
+    id: repos
+    attributes:
+      label: Affected Repositories
+      description: Which repositories does this enhancement affect?
+      multiple: true
+      options:
+        - praxis
+        - operator
+        - extproc
+        - conventions
+        - experiments
+        - grid
+        - forge
+        - policy
+        - demos
+        - pingora
+        - ai
+    validations:
+      required: true

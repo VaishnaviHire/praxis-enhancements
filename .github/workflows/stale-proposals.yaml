@@ -1,0 +1,80 @@
+name: Stale Proposal Management
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Weekly on Monday at 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  stale-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.PRAXIS_BOT_APP_ID }}
+          private-key: ${{ secrets.PRAXIS_BOT_APP_PRIVATE_KEY }}
+
+      - name: Manage stale proposal PRs
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Convert failing non-draft PRs to draft after 3 days
+          gh pr list --repo "$REPO" --state open --json number,isDraft,updatedAt,labels \
+            --jq '.[] | select(.isDraft == false) | select(.labels | map(.name) | index("skip/stale-close") | not)' | \
+          while IFS= read -r pr; do
+            number=$(echo "$pr" | jq -r '.number')
+            updated=$(echo "$pr" | jq -r '.updatedAt')
+            days_ago=$(( ($(date +%s) - $(date -d "$updated" +%s)) / 86400 ))
+
+            if [ "$days_ago" -ge 3 ]; then
+              # Check if any checks are failing
+              check_status=$(gh pr checks "$number" --repo "$REPO" --json state \
+                --jq '[.[] | select(.state == "FAILURE")] | length' 2>/dev/null || echo "0")
+              if [ "$check_status" -gt 0 ]; then
+                gh pr ready --undo "$number" --repo "$REPO" 2>/dev/null || true
+                gh pr comment "$number" --repo "$REPO" \
+                  --body "<!-- enhancements:stale-check -->
+          This PR has been converted to draft due to failing checks and $days_ago days of inactivity.
+          Please fix the issues and mark it ready for review when updated."
+              fi
+            fi
+          done
+
+          # Close stale draft PRs after 5 days
+          gh pr list --repo "$REPO" --state open --draft --json number,updatedAt,labels \
+            --jq '.[] | select(.labels | map(.name) | index("skip/stale-close") | not)' | \
+          while IFS= read -r pr; do
+            number=$(echo "$pr" | jq -r '.number')
+            updated=$(echo "$pr" | jq -r '.updatedAt')
+            days_ago=$(( ($(date +%s) - $(date -d "$updated" +%s)) / 86400 ))
+
+            if [ "$days_ago" -ge 5 ]; then
+              gh pr close "$number" --repo "$REPO" \
+                --comment "<!-- enhancements:stale-close -->
+          Closing this draft PR due to $days_ago days of inactivity.
+          Feel free to re-open when you're ready to continue."
+            fi
+          done
+
+          # Close stale non-draft PRs after 7 days
+          gh pr list --repo "$REPO" --state open --json number,isDraft,updatedAt,labels \
+            --jq '.[] | select(.isDraft == false) | select(.labels | map(.name) | index("skip/stale-close") | not)' | \
+          while IFS= read -r pr; do
+            number=$(echo "$pr" | jq -r '.number')
+            updated=$(echo "$pr" | jq -r '.updatedAt')
+            days_ago=$(( ($(date +%s) - $(date -d "$updated" +%s)) / 86400 ))
+
+            if [ "$days_ago" -ge 7 ]; then
+              gh pr close "$number" --repo "$REPO" \
+                --comment "<!-- enhancements:stale-close -->
+          Closing this PR due to $days_ago days of inactivity.
+          Feel free to re-open when you're ready to continue."
+            fi
+          done

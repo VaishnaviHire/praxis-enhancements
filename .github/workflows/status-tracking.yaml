@@ -1,0 +1,98 @@
+name: Status Tracking
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'proposals/*.md'
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  track-status-changes:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.PRAXIS_BOT_APP_ID }}
+          private-key: ${{ secrets.PRAXIS_BOT_APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 2
+
+      - name: Detect and report status changes
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          VALID_STATUSES="proposed blocked deferred accepted experimental released withdrawn retroactive"
+
+          # Get changed proposal files
+          changed_files=$(git diff --name-only HEAD~1 HEAD -- 'proposals/*.md' | grep -v 'template.md' || true)
+
+          if [ -z "$changed_files" ]; then
+            echo "No proposal changes detected"
+            exit 0
+          fi
+
+          for file in $changed_files; do
+            if [ ! -f "$file" ]; then
+              continue
+            fi
+
+            # Extract current status
+            new_status=$(sed -n '/^---$/,/^---$/p' "$file" | sed '1d;$d' | grep -E '^status:' | sed 's/^status:[[:space:]]*//')
+
+            # Extract previous status
+            old_content=$(git show HEAD~1:"$file" 2>/dev/null || echo "")
+            if [ -z "$old_content" ]; then
+              old_status="(new)"
+            else
+              old_status=$(echo "$old_content" | sed -n '/^---$/,/^---$/p' | sed '1d;$d' | grep -E '^status:' | sed 's/^status:[[:space:]]*//')
+            fi
+
+            if [ "$old_status" = "$new_status" ]; then
+              continue
+            fi
+
+            echo "Status change in $file: $old_status -> $new_status"
+
+            # Extract issue URL from frontmatter
+            issue_url=$(sed -n '/^---$/,/^---$/p' "$file" | sed '1d;$d' | grep -E '^issue:' | sed 's/^issue:[[:space:]]*//')
+
+            # If the issue is in this repo, post a comment
+            if echo "$issue_url" | grep -q "$REPO"; then
+              issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$')
+              if [ -n "$issue_number" ]; then
+                proposal_name=$(basename "$file" .md)
+                gh issue comment "$issue_number" --repo "$REPO" \
+                  --body "<!-- enhancements:status-tracking -->
+          **Proposal status changed**: \`${old_status}\` -> \`${new_status}\`
+
+          Proposal: [\`${proposal_name}\`](https://github.com/${REPO}/blob/main/${file})"
+
+                # Apply status label
+                if echo "$VALID_STATUSES" | grep -qw "$new_status"; then
+                  # Remove old status labels
+                  for s in $VALID_STATUSES; do
+                    gh issue edit "$issue_number" --repo "$REPO" --remove-label "status/${s}" 2>/dev/null || true
+                  done
+                  # Add new status label
+                  gh issue edit "$issue_number" --repo "$REPO" --add-label "status/${new_status}" 2>/dev/null || true
+                fi
+
+                # Apply repo labels from frontmatter
+                repos_list=$(sed -n '/^---$/,/^---$/p' "$file" | sed '1d;$d' | sed -n '/^repos:/,/^[a-z]/p' | grep -E '^  - ' | sed 's/^  - //' | tr -d '[:space:]')
+                for repo_val in $repos_list; do
+                  gh issue edit "$issue_number" --repo "$REPO" --add-label "repo/${repo_val}" 2>/dev/null || true
+                done
+              fi
+            fi
+          done
